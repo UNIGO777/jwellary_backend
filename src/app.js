@@ -28,6 +28,7 @@ app.use(express.json({ limit: '2mb' }))
 app.use(express.urlencoded({ extended: true }))
 
 app.get('/health', (req, res) => res.json({ ok: true }))
+app.get('/api', (req, res) => res.json({ ok: true }))
 
 app.use('/docs', swaggerUi.serve, swaggerUi.setup(openapiSpec))
 
