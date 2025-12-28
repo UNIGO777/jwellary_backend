@@ -21,7 +21,12 @@ connectDB().catch((err) => {
   console.error('MongoDB connection error:', err?.message || err)
 })
 
-app.use(helmet())
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginEmbedderPolicy: false
+  })
+)
 app.use(cors({ origin: env.corsOrigin }))
 app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'))
 app.use(express.json({ limit: '2mb' }))

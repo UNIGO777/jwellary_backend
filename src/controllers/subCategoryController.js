@@ -17,7 +17,8 @@ export const index = async (req, res, next) => {
     const filter = {}
     if (q) filter.$or = [{ name: { $regex: q, $options: 'i' } }, { slug: { $regex: q, $options: 'i' } }]
     if (isActive !== undefined) filter.isActive = isActive === 'true'
-    if (categoryId && isId(categoryId)) filter.category = categoryId
+    if (categoryId && !isId(categoryId)) return res.status(400).json({ ok: false, message: 'Invalid categoryId' })
+    if (categoryId) filter.category = categoryId
     const data = await SubCategory.find(filter)
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
@@ -103,4 +104,3 @@ export const remove = async (req, res, next) => {
     next(err)
   }
 }
-

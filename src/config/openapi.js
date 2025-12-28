@@ -39,6 +39,40 @@ export const openapiSpec = {
         properties: { currency: { type: 'string', default: 'INR' }, amount: { type: 'number', minimum: 0 } },
         required: ['amount']
       },
+      PriceInput: {
+        oneOf: [{ type: 'number', minimum: 0 }, { $ref: '#/components/schemas/Price' }]
+      },
+      ProductVariant: {
+        type: 'object',
+        properties: {
+          _id: { type: 'string' },
+          title: { type: 'string' },
+          sku: { type: 'string' },
+          image: { type: 'string' },
+          images: { type: 'array', items: { type: 'string' } },
+          video: { type: 'string' },
+          makingCost: { $ref: '#/components/schemas/Price' },
+          otherCharges: { $ref: '#/components/schemas/Price' },
+          stock: { type: 'integer', minimum: 0 },
+          isActive: { type: 'boolean' },
+          attributes: { type: 'object' }
+        }
+      },
+      ProductVariantInput: {
+        type: 'object',
+        properties: {
+          title: { type: 'string' },
+          sku: { type: 'string' },
+          image: { type: 'string' },
+          images: { type: 'array', items: { type: 'string' } },
+          video: { type: 'string' },
+          makingCost: { $ref: '#/components/schemas/PriceInput' },
+          otherCharges: { $ref: '#/components/schemas/PriceInput' },
+          stock: { type: 'integer', minimum: 0 },
+          isActive: { type: 'boolean' },
+          attributes: { type: 'object' }
+        }
+      },
       Address: {
         type: 'object',
         properties: {
@@ -82,17 +116,13 @@ export const openapiSpec = {
           name: { type: 'string' },
           slug: { type: 'string' },
           description: { type: 'string' },
-          sku: { type: 'string' },
-          image: { type: 'string' },
-          images: { type: 'array', items: { type: 'string' } },
-          price: { $ref: '#/components/schemas/Price' },
+          variants: { type: 'array', items: { $ref: '#/components/schemas/ProductVariant' }, minItems: 1 },
           category: { type: 'string' },
           subCategory: { type: 'string' },
-          stock: { type: 'integer', minimum: 0 },
           isActive: { type: 'boolean' },
           attributes: { type: 'object' }
         },
-        required: ['name', 'price']
+        required: ['name', 'variants']
       },
       PromoCode: {
         type: 'object',
@@ -218,6 +248,32 @@ export const openapiSpec = {
         }
       }
     },
+    '/api/files/video': {
+      post: {
+        tags: ['Files'],
+        requestBody: {
+          required: true,
+          content: {
+            'multipart/form-data': {
+              schema: {
+                type: 'object',
+                properties: {
+                  video: { type: 'string', format: 'binary' }
+                },
+                required: ['video']
+              }
+            }
+          }
+        },
+        responses: {
+          201: {
+            description: 'Created',
+            content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' }, path: { type: 'string' } } } } }
+          },
+          400: { description: 'Bad Request', content: { 'application/json': { schema: { $ref: '#/components/schemas/Error' } } } }
+        }
+      }
+    },
     '/api/mail/send': {
       post: {
         tags: ['Mail'],
@@ -261,7 +317,23 @@ export const openapiSpec = {
         tags: ['Products'],
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', properties: { name: { type: 'string' }, price: { type: 'number' }, description: { type: 'string' }, categoryId: { type: 'string' }, subCategoryId: { type: 'string' }, sku: { type: 'string' }, stock: { type: 'integer' }, attributes: { type: 'object' }, image: { type: 'string' }, images: { type: 'array', items: { type: 'string' } } }, required: ['name', 'price'] } } }
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  description: { type: 'string' },
+                  categoryId: { type: 'string' },
+                  subCategoryId: { type: 'string' },
+                  attributes: { type: 'object' },
+                  isActive: { type: 'boolean' },
+                  variants: { type: 'array', items: { $ref: '#/components/schemas/ProductVariantInput' }, minItems: 1 },
+                },
+                required: ['name', 'variants']
+              }
+            }
+          }
         },
         responses: {
           201: { description: 'Created', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' }, data: { $ref: '#/components/schemas/Product' } } } } } },
@@ -286,7 +358,22 @@ export const openapiSpec = {
         parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object' } } }
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  description: { type: 'string' },
+                  categoryId: { type: 'string' },
+                  subCategoryId: { type: 'string' },
+                  attributes: { type: 'object' },
+                  isActive: { type: 'boolean' },
+                  variants: { type: 'array', items: { $ref: '#/components/schemas/ProductVariantInput' }, minItems: 1 },
+                }
+              }
+            }
+          }
         },
         responses: {
           200: { description: 'Updated', content: { 'application/json': { schema: { type: 'object', properties: { ok: { type: 'boolean' }, data: { $ref: '#/components/schemas/Product' } } } } } },
@@ -448,4 +535,3 @@ export const openapiSpec = {
     }
   }
 }
-
