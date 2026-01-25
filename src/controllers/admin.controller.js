@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken'
 import { env } from '../config/env.js'
 import { sendMail } from '../config/mailer.js'
+import { adminOtpEmail } from '../EmailTamplates/index.js'
 
 const store = new Map()
 const ttlMs = 10 * 60 * 1000
@@ -27,9 +28,8 @@ export const loginInit = async (req, res, next) => {
     const code = genOtp()
     const exp = Date.now() + ttlMs
     store.set(inputEmail, { code, exp, attempts: 0 })
-    const subject = 'Admin Login OTP'
-    const text = `Your OTP is ${code}. It expires in 10 minutes.`
-    await sendMail({ to: inputEmail, subject, text })
+    const emailContent = adminOtpEmail({ otp: code, expiresInMinutes: 10 })
+    await sendMail({ to: inputEmail, subject: emailContent.subject, text: emailContent.text, html: emailContent.html })
     res.json({ ok: true, message: 'OTP sent' })
   } catch (err) {
     next(err)
