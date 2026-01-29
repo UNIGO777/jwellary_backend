@@ -8,7 +8,7 @@ if (!fs.existsSync(dir)) {
   fs.mkdirSync(dir, { recursive: true })
 }
 
-const server = app.listen(env.port, () => {
+const server = app.listen(env.port, env.host, () => {
   const url = `http://localhost:${env.port}`
   console.log(`Server started at ${url}`)
 })

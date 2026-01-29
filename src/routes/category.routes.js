@@ -1,13 +1,14 @@
 import { Router } from 'express'
 import { index, show, create, updateOne, remove } from '../controllers/categoryController.js'
+import { authAdmin } from '../middlewares/auth.js'
 
 const router = Router()
 
 router.get('/', index)
 router.get('/:id', show)
-router.post('/', create)
-router.put('/:id', updateOne)
-router.delete('/:id', remove)
+router.post('/', authAdmin, create)
+router.put('/:id', authAdmin, updateOne)
+router.delete('/:id', authAdmin, remove)
 
 export default router
 

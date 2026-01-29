@@ -50,6 +50,26 @@ export const index = async (req, res, next) => {
   }
 }
 
+export const adminIndex = async (req, res, next) => {
+  try {
+    if (!isDBConnected()) return res.status(503).json({ ok: false, message: 'Database not connected' })
+    const page = Number(req.query.page || 1)
+    const limit = Number(req.query.limit || 20)
+    const data = await Order.find({})
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .populate('user')
+      .populate('promocode')
+      .populate('payment')
+      .lean()
+    const total = await Order.countDocuments({})
+    res.json({ ok: true, data, page, limit, total })
+  } catch (err) {
+    next(err)
+  }
+}
+
 export const show = async (req, res, next) => {
   try {
     if (!isDBConnected()) return res.status(503).json({ ok: false, message: 'Database not connected' })

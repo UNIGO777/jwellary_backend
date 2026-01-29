@@ -32,7 +32,7 @@ const OrderSchema = new Schema(
     subtotal: { type: Number, required: true, min: 0 },
     discount: { type: Number, default: 0, min: 0 },
     total: { type: Number, required: true, min: 0 },
-    status: { type: String, default: 'pending', enum: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled'] },
+    status: { type: String, default: 'pending', enum: ['pending', 'processing', 'confirmed', 'shipped', 'delivered', 'cancelled'] },
     promocode: { type: Schema.Types.ObjectId, ref: 'PromoCode' },
     payment: { type: Schema.Types.ObjectId, ref: 'Payment' },
     customerEmail: { type: String },
