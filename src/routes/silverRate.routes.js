@@ -1,12 +1,11 @@
 import { Router } from 'express'
-import { index, show, create, updateOne, remove, materialTypes } from '../controllers/productController.js'
+import { create, index, remove, show, updateOne } from '../controllers/silverRate.controller.js'
 import { authAdmin } from '../middlewares/auth.js'
 
 const router = Router()
 
-router.get('/meta/material-types', materialTypes)
-router.get('/', index)
-router.get('/:id', show)
+router.get('/', authAdmin, index)
+router.get('/:id', authAdmin, show)
 router.post('/', authAdmin, create)
 router.put('/:id', authAdmin, updateOne)
 router.delete('/:id', authAdmin, remove)

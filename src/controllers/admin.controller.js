@@ -134,9 +134,9 @@ export const analytics = async (req, res, next) => {
         { $limit: 6 }
       ]),
       Product.aggregate([
-        { $project: { name: 1, slug: 1, isActive: 1, minStock: { $min: '$variants.stock' }, variants: 1 } },
-        { $match: { minStock: { $lte: 3 } } },
-        { $sort: { minStock: 1 } },
+        { $project: { name: 1, slug: 1, isActive: 1, stock: 1 } },
+        { $match: { stock: { $lte: 3 } } },
+        { $sort: { stock: 1 } },
         { $limit: 8 }
       ])
     ])
@@ -174,7 +174,7 @@ export const analytics = async (req, res, next) => {
       _id: p._id,
       name: p.name,
       slug: p.slug,
-      minStock: Number(p.minStock || 0),
+      minStock: Number(p.stock || 0),
       isActive: Boolean(p.isActive)
     }))
 

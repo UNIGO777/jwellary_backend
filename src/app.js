@@ -15,6 +15,10 @@ import cartRoutes from './routes/cart.routes.js'
 import promocodeRoutes from './routes/promocode.routes.js'
 import orderRoutes from './routes/order.routes.js'
 import paymentRoutes from './routes/payment.routes.js'
+import goldRateRoutes from './routes/goldRate.routes.js'
+import silverRateRoutes from './routes/silverRate.routes.js'
+import diamondTypeRoutes from './routes/diamondType.routes.js'
+import diamondPriceRoutes from './routes/diamondPrice.routes.js'
 import swaggerUi from 'swagger-ui-express'
 import { openapiSpec } from './config/openapi.js'
 import { connectDB } from './config/db.js'
@@ -52,9 +56,23 @@ app.use('/api/promocodes', promocodeRoutes)
 app.use('/api/orders', orderRoutes)
 app.use('/api/payments', paymentRoutes)
 app.use('/api/files', filesRoutes)
+app.use('/api/admin/gold-rates', goldRateRoutes)
+app.use('/api/admin/silver-rates', silverRateRoutes)
+app.use('/api/admin/diamond-types', diamondTypeRoutes)
+app.use('/api/admin/diamond-prices', diamondPriceRoutes)
 app.use('/api', routes)
 
 app.use('/uploads', express.static(path.resolve(env.uploadDir)))
+app.use('/uploads', (req, res) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return res.status(404).end()
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480"><rect width="100%" height="100%" fill="#f4f4f5"/><path d="M240 270l46-60 54 70 40-50 60 80H220z" fill="#d4d4d8"/><circle cx="260" cy="190" r="18" fill="#d4d4d8"/><text x="50%" y="82%" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto" font-size="18" fill="#71717a">Missing upload</text></svg>'
+  res
+    .status(404)
+    .set('Content-Type', 'image/svg+xml; charset=utf-8')
+    .set('Cache-Control', 'no-store')
+    .send(svg)
+})
 
 app.use(notFound)
 app.use(errorHandler)
