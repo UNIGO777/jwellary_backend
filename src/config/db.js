@@ -7,9 +7,8 @@ export const isDBConnected = () => connected
 
 export const connectDB = async () => {
   if (!env.mongoUri) {
-    console.warn('MongoDB URI not set. Skipping DB connection.')
     connected = false
-    return
+    throw new Error('MongoDB URI not set')
   }
   try {
     await mongoose.connect(env.mongoUri, {
@@ -18,13 +17,23 @@ export const connectDB = async () => {
     })
     connected = true
     console.log('MongoDB connected')
+    return true
   } catch (err) {
     connected = false
     console.error('MongoDB connection error:', err.message)
+    throw err
   }
 }
 
 mongoose.connection.on('disconnected', () => {
   connected = false
+})
+
+mongoose.connection.on('connected', () => {
+  connected = true
+})
+
+mongoose.connection.on('reconnected', () => {
+  connected = true
 })
 

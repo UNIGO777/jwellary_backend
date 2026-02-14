@@ -133,6 +133,7 @@ export const loginInit = async (req, res, next) => {
 
     const ok = await verifyPassword(rawPassword, user.password)
     if (!ok) return res.status(401).json({ ok: false, message: 'Invalid credentials' })
+    if (user.isBlocked) return res.status(403).json({ ok: false, message: 'Account blocked' })
 
     const code = genOtp()
     const exp = Date.now() + ttlMs
@@ -170,6 +171,7 @@ export const loginVerify = async (req, res, next) => {
 
     const user = await User.findById(userId).lean()
     if (!user) return res.status(404).json({ ok: false, message: 'User not found' })
+    if (user.isBlocked) return res.status(403).json({ ok: false, message: 'Account blocked' })
 
     const token = signUserToken(user)
     res.json({ ok: true, token, data: { _id: user._id.toString(), email: user.email, fullName: user.fullName } })

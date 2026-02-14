@@ -25,6 +25,22 @@ const AddressSchema = new Schema(
   { _id: false }
 )
 
+const DeliverySchema = new Schema(
+  {
+    provider: { type: String, trim: true },
+    trackingId: { type: String, trim: true },
+    trackingUrl: { type: String, trim: true },
+    status: {
+      type: String,
+      default: 'pending',
+      enum: ['pending', 'packed', 'shipped', 'in_transit', 'out_for_delivery', 'delivered', 'returned', 'cancelled']
+    },
+    shippedAt: { type: Date },
+    deliveredAt: { type: Date }
+  },
+  { _id: false }
+)
+
 const OrderSchema = new Schema(
   {
     user: { type: Schema.Types.ObjectId, ref: 'User' },
@@ -38,6 +54,7 @@ const OrderSchema = new Schema(
     customerEmail: { type: String },
     customerPhone: { type: String },
     shippingAddress: { type: AddressSchema },
+    delivery: { type: DeliverySchema },
     notes: { type: String }
   },
   { timestamps: true }

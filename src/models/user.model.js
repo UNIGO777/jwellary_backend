@@ -4,7 +4,9 @@ const UserSchema = new Schema(
   {
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true },
-    fullName: { type: String, required: true, trim: true }
+    fullName: { type: String, required: true, trim: true },
+    isBlocked: { type: Boolean, default: false },
+    blockedAt: { type: Date }
   },
   { timestamps: true }
 )

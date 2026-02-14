@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken'
+import mongoose from 'mongoose'
 import { env } from '../config/env.js'
 import { isDBConnected } from '../config/db.js'
 import { sendMail } from '../config/mailer.js'
@@ -15,6 +16,7 @@ const maxAttempts = 5
 
 const genOtp = () => String(Math.floor(100000 + Math.random() * 900000))
 const dayKeyUtc = (d) => new Date(d).toISOString().slice(0, 10)
+const isId = (id) => mongoose.isValidObjectId(id)
 
 export const loginInit = async (req, res, next) => {
   try {
@@ -200,6 +202,66 @@ export const analytics = async (req, res, next) => {
         lowStock
       }
     })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const usersIndex = async (req, res, next) => {
+  try {
+    if (!isDBConnected()) return res.status(503).json({ ok: false, message: 'Database not connected' })
+    const page = Number(req.query.page || 1)
+    const limit = Number(req.query.limit || 20)
+    const q = (req.query.q || '').toString().trim()
+
+    const filter = {}
+    if (q) {
+      filter.$or = [{ email: { $regex: q, $options: 'i' } }, { fullName: { $regex: q, $options: 'i' } }]
+    }
+
+    const data = await User.find(filter)
+      .sort({ createdAt: -1 })
+      .skip((page - 1) * limit)
+      .limit(limit)
+      .select({ email: 1, fullName: 1, isBlocked: 1, blockedAt: 1, createdAt: 1 })
+      .lean()
+    const total = await User.countDocuments(filter)
+    res.json({ ok: true, data, page, limit, total })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const setUserBlocked = async (req, res, next) => {
+  try {
+    if (!isDBConnected()) return res.status(503).json({ ok: false, message: 'Database not connected' })
+    const id = req.params.id
+    if (!isId(id)) return res.status(400).json({ ok: false, message: 'Invalid id' })
+    if (req.body?.isBlocked === undefined) return res.status(400).json({ ok: false, message: 'Missing isBlocked' })
+    const isBlocked = Boolean(req.body.isBlocked)
+
+    const patch = { isBlocked }
+    if (isBlocked) patch.blockedAt = new Date()
+    else patch.blockedAt = undefined
+
+    const user = await User.findByIdAndUpdate(id, patch, { new: true })
+      .select({ email: 1, fullName: 1, isBlocked: 1, blockedAt: 1, createdAt: 1 })
+      .lean()
+    if (!user) return res.status(404).json({ ok: false, message: 'User not found' })
+    res.json({ ok: true, data: user })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const deleteUser = async (req, res, next) => {
+  try {
+    if (!isDBConnected()) return res.status(503).json({ ok: false, message: 'Database not connected' })
+    const id = req.params.id
+    if (!isId(id)) return res.status(400).json({ ok: false, message: 'Invalid id' })
+    const ok = await User.findByIdAndDelete(id)
+    if (!ok) return res.status(404).json({ ok: false, message: 'User not found' })
+    res.status(204).send()
   } catch (err) {
     next(err)
   }

@@ -151,3 +151,39 @@ export const setStatus = async (req, res, next) => {
     next(err)
   }
 }
+
+export const setDelivery = async (req, res, next) => {
+  try {
+    if (!isDBConnected()) return res.status(503).json({ ok: false, message: 'Database not connected' })
+    const id = req.params.id
+    if (!isId(id)) return res.status(400).json({ ok: false, message: 'Invalid id' })
+
+    const doc = await Order.findById(id)
+    if (!doc) return res.status(404).json({ ok: false, message: 'Order not found' })
+
+    const payload = req.body && typeof req.body === 'object' ? req.body : {}
+    const nextDelivery = { ...(doc.delivery ? doc.delivery.toObject?.() || doc.delivery : {}) }
+
+    if (payload.provider !== undefined) nextDelivery.provider = payload.provider ? String(payload.provider).trim() : undefined
+    if (payload.trackingId !== undefined) nextDelivery.trackingId = payload.trackingId ? String(payload.trackingId).trim() : undefined
+    if (payload.trackingUrl !== undefined) nextDelivery.trackingUrl = payload.trackingUrl ? String(payload.trackingUrl).trim() : undefined
+    if (payload.status !== undefined) {
+      const s = payload.status ? String(payload.status).trim() : ''
+      if (s) nextDelivery.status = s
+    }
+    if (payload.shippedAt !== undefined) {
+      const d = payload.shippedAt ? new Date(payload.shippedAt) : null
+      if (d && !Number.isNaN(d.getTime())) nextDelivery.shippedAt = d
+    }
+    if (payload.deliveredAt !== undefined) {
+      const d = payload.deliveredAt ? new Date(payload.deliveredAt) : null
+      if (d && !Number.isNaN(d.getTime())) nextDelivery.deliveredAt = d
+    }
+
+    doc.delivery = nextDelivery
+    const saved = await doc.save()
+    res.json({ ok: true, data: saved.toObject() })
+  } catch (err) {
+    next(err)
+  }
+}

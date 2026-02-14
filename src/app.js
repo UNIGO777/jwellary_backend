@@ -21,14 +21,9 @@ import diamondTypeRoutes from './routes/diamondType.routes.js'
 import diamondPriceRoutes from './routes/diamondPrice.routes.js'
 import swaggerUi from 'swagger-ui-express'
 import { openapiSpec } from './config/openapi.js'
-import { connectDB } from './config/db.js'
 import { errorHandler, notFound } from './middlewares/error.js'
 
 const app = express()
-
-connectDB().catch((err) => {
-  console.error('MongoDB connection error:', err?.message || err)
-})
 
 app.use(
   helmet({
