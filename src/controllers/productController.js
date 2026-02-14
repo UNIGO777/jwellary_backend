@@ -6,6 +6,7 @@ import { GoldRate } from '../models/goldRate.model.js'
 import { SilverRate } from '../models/silverRate.model.js'
 import { DiamondPrice } from '../models/diamondPrice.model.js'
 import { DiamondType } from '../models/diamondType.model.js'
+import { User } from '../models/user.model.js'
 import { isDBConnected } from '../config/db.js'
 
 const isId = (id) => mongoose.isValidObjectId(id)
@@ -30,6 +31,13 @@ const normalizeMaterial = (value) => {
   return v
 }
 
+const normalizeSizes = (value) => {
+  const raw = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : []
+  const list = raw.map((s) => String(s).trim()).filter(Boolean)
+  const unique = Array.from(new Set(list))
+  return unique.length ? unique.slice(0, 50) : undefined
+}
+
 const diamondTypeLabel = (t) => {
   const parts = [t?.origin, t?.shape, t?.cut, t?.color, t?.clarity].filter(Boolean).map(String)
   return parts.join(' / ')
@@ -47,11 +55,124 @@ const formatCompactNumber = (value) => {
   return String(Number(n.toFixed(6)))
 }
 
+const sanitizeHtml = (value) => {
+  const input = value === undefined || value === null ? '' : String(value)
+  if (!input) return ''
+  let out = input
+  out = out.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+  out = out.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, '')
+  out = out.replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, '')
+  out = out.replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, '')
+  out = out.replace(/<embed\b[^<]*(?:(?!<\/embed>)<[^<]*)*<\/embed>/gi, '')
+  out = out.replace(/<link\b[^>]*>/gi, '')
+  out = out.replace(/<meta\b[^>]*>/gi, '')
+  out = out.replace(/\son[a-z]+\s*=\s*(['"]).*?\1/gi, '')
+  out = out.replace(/\son[a-z]+\s*=\s*[^\s>]+/gi, '')
+  out = out.replace(/\s(href|src)\s*=\s*(['"])\s*javascript:[^'"]*\2/gi, '')
+  out = out.replace(/\s(href|src)\s*=\s*javascript:[^\s>]+/gi, '')
+  return out.trim()
+}
+
+const computeReviewStats = (reviews) => {
+  const list = Array.isArray(reviews) ? reviews : []
+  const count = list.length
+  if (!count) return { rating: 0, reviewsCount: 0 }
+  const sum = list.reduce((acc, r) => acc + (Number(r?.rating) || 0), 0)
+  const avg = sum / count
+  const rating = Math.round(avg * 10) / 10
+  return { rating, reviewsCount: count }
+}
+
+const computeAskingPriceInr = (p) => {
+  const making = Number(p?.makingCost?.amount) || 0
+  const other = Number(p?.otherCharges?.amount) || 0
+  const total = making + other
+  return Number.isFinite(total) && total >= 0 ? total : 0
+}
+
+const computeMaterialValueInr = ({ product, goldByCarat, silverByPurityMark, diamondByTypeId }) => {
+  const attrs = asPlainObject(product?.attributes)
+  const weight = Number(attrs?.weightGrams)
+  const weightValue = Number.isFinite(weight) && weight > 0 ? weight : 0
+  const material = product?.material ? String(product.material).toLowerCase() : ''
+  const materialType = product?.materialType
+
+  if (material === 'gold') {
+    const carat = Number(materialType)
+    const rate = Number(goldByCarat?.get(carat)?.ratePer10Gram)
+    if (!Number.isFinite(rate) || rate <= 0 || !weightValue) return 0
+    return (rate / 10) * weightValue
+  }
+
+  if (material === 'silver') {
+    const purityMark = Number(materialType)
+    const rate = Number(silverByPurityMark?.get(purityMark)?.ratePerKg)
+    if (!Number.isFinite(rate) || rate <= 0 || !weightValue) return 0
+    return (rate / 1000) * weightValue
+  }
+
+  if (material === 'diamond') {
+    const typeId = materialType ? String(materialType) : ''
+    if (!typeId) return 0
+    const rate = Number(diamondByTypeId?.get(typeId)?.pricePerCarat)
+    if (!Number.isFinite(rate) || rate <= 0) return 0
+    const carat = Number(attrs?.diamondCarat ?? attrs?.carat ?? attrs?.carats ?? attrs?.weightCarat ?? attrs?.weightCarats)
+    const caratValue = Number.isFinite(carat) && carat > 0 ? carat : 0
+    if (!caratValue) return 0
+    return rate * caratValue
+  }
+
+  return 0
+}
+
+const applyDynamicPricing = ({ product, goldByCarat, silverByPurityMark, diamondByTypeId }) => {
+  const askingPriceInr = computeAskingPriceInr(product)
+  const materialValueInr = computeMaterialValueInr({ product, goldByCarat, silverByPurityMark, diamondByTypeId })
+  const total = askingPriceInr + materialValueInr
+  const attrs = { ...asPlainObject(product?.attributes) }
+  attrs.askingPriceInr = Math.round(askingPriceInr)
+  attrs.materialValueInr = Math.round(materialValueInr)
+  attrs.priceInr = Math.round(total)
+  product.attributes = attrs
+  product.priceInr = attrs.priceInr
+  return product
+}
+
+const buildRateMapsForProduct = async (p) => {
+  const material = p?.material ? String(p.material).toLowerCase() : ''
+  const goldByCarat = new Map()
+  const silverByPurityMark = new Map()
+  const diamondByTypeId = new Map()
+
+  if (material === 'gold') {
+    const carat = Number(p?.materialType)
+    if (Number.isFinite(carat)) {
+      const rate = await GoldRate.findOne({ carat }).sort({ date: -1, createdAt: -1 }).lean()
+      if (rate) goldByCarat.set(carat, { ratePer10Gram: rate?.ratePer10Gram })
+    }
+  } else if (material === 'silver') {
+    const purityMark = Number(p?.materialType)
+    if (Number.isFinite(purityMark)) {
+      const rate = await SilverRate.findOne({ purityMark }).sort({ date: -1, createdAt: -1 }).lean()
+      if (rate) silverByPurityMark.set(purityMark, { ratePerKg: rate?.ratePerKg })
+    }
+  } else if (material === 'diamond') {
+    const typeId = p?.materialType ? String(p.materialType) : ''
+    if (typeId && isId(typeId)) {
+      const rate = await DiamondPrice.findOne({ diamondType: typeId }).sort({ date: -1, createdAt: -1 }).lean()
+      if (rate) diamondByTypeId.set(typeId, { pricePerCarat: rate?.pricePerCarat })
+    }
+  }
+
+  return { goldByCarat, silverByPurityMark, diamondByTypeId }
+}
+
 export const index = async (req, res, next) => {
   try {
     if (!isDBConnected()) return res.status(503).json({ ok: false, message: 'Database not connected' })
     const page = Number(req.query.page || 1)
-    const limit = Number(req.query.limit || 20)
+    const requestedLimit = Number(req.query.limit || 20)
+    const limit = Math.min(Number.isFinite(requestedLimit) && requestedLimit > 0 ? requestedLimit : 20, 30)
     const q = (req.query.q || '').toString().trim().toLowerCase()
     const isActive = req.query.isActive
     const categoryId = req.query.categoryId
@@ -83,9 +204,68 @@ export const index = async (req, res, next) => {
         }
       }
     }
-    const data = await Product.find(filter).select('-variants').sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean()
+    const data = await Product.find(filter).select('-variants -reviews').sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean()
     const total = await Product.countDocuments(filter)
-    res.json({ ok: true, data, page, limit, total })
+
+    const goldCarats = Array.from(
+      new Set(
+        (data || [])
+          .filter((p) => String(p?.material || '').toLowerCase() === 'gold')
+          .map((p) => Number(p?.materialType))
+          .filter((n) => Number.isFinite(n))
+      )
+    )
+    const silverMarks = Array.from(
+      new Set(
+        (data || [])
+          .filter((p) => String(p?.material || '').toLowerCase() === 'silver')
+          .map((p) => Number(p?.materialType))
+          .filter((n) => Number.isFinite(n))
+      )
+    )
+    const diamondTypeIds = Array.from(
+      new Set(
+        (data || [])
+          .filter((p) => String(p?.material || '').toLowerCase() === 'diamond')
+          .map((p) => (p?.materialType ? String(p.materialType) : ''))
+          .filter(Boolean)
+      )
+    )
+    const diamondIdsForQuery = diamondTypeIds.filter((id) => isId(id)).map((id) => new mongoose.Types.ObjectId(id))
+
+    const [goldLatest, silverLatest, diamondLatest] = await Promise.all([
+      goldCarats.length
+        ? GoldRate.aggregate([
+            { $match: { carat: { $in: goldCarats } } },
+            { $sort: { date: -1, createdAt: -1, _id: -1 } },
+            { $group: { _id: '$carat', carat: { $first: '$carat' }, ratePer10Gram: { $first: '$ratePer10Gram' } } },
+            { $project: { _id: 0, carat: 1, ratePer10Gram: 1 } }
+          ])
+        : [],
+      silverMarks.length
+        ? SilverRate.aggregate([
+            { $match: { purityMark: { $in: silverMarks } } },
+            { $sort: { date: -1, createdAt: -1, _id: -1 } },
+            { $group: { _id: '$purityMark', purityMark: { $first: '$purityMark' }, ratePerKg: { $first: '$ratePerKg' } } },
+            { $project: { _id: 0, purityMark: 1, ratePerKg: 1 } }
+          ])
+        : [],
+      diamondIdsForQuery.length
+        ? DiamondPrice.aggregate([
+            { $match: { diamondType: { $in: diamondIdsForQuery } } },
+            { $sort: { date: -1, createdAt: -1, _id: -1 } },
+            { $group: { _id: '$diamondType', diamondType: { $first: '$diamondType' }, pricePerCarat: { $first: '$pricePerCarat' } } },
+            { $project: { _id: 0, diamondType: 1, pricePerCarat: 1 } }
+          ])
+        : []
+    ])
+
+    const goldByCarat = new Map((goldLatest || []).map((g) => [Number(g?.carat), { ratePer10Gram: g?.ratePer10Gram }]))
+    const silverByPurityMark = new Map((silverLatest || []).map((s) => [Number(s?.purityMark), { ratePerKg: s?.ratePerKg }]))
+    const diamondByTypeId = new Map((diamondLatest || []).map((d) => [d?.diamondType ? String(d.diamondType) : '', { pricePerCarat: d?.pricePerCarat }]))
+
+    const priced = (data || []).map((p) => applyDynamicPricing({ product: p, goldByCarat, silverByPurityMark, diamondByTypeId }))
+    res.json({ ok: true, data: priced, page, limit, total })
   } catch (err) {
     next(err)
   }
@@ -96,9 +276,82 @@ export const show = async (req, res, next) => {
     if (!isDBConnected()) return res.status(503).json({ ok: false, message: 'Database not connected' })
     const id = req.params.id
     if (!isId(id)) return res.status(400).json({ ok: false, message: 'Invalid id' })
-    const p = await Product.findById(id).select('-variants').lean()
+    const p = await Product.findById(id).select('-variants -reviews').lean()
     if (!p) return res.status(404).json({ ok: false, message: 'Product not found' })
-    res.json({ ok: true, data: p })
+    const { goldByCarat, silverByPurityMark, diamondByTypeId } = await buildRateMapsForProduct(p)
+    const priced = applyDynamicPricing({ product: p, goldByCarat, silverByPurityMark, diamondByTypeId })
+    res.json({ ok: true, data: priced })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const reviewsIndex = async (req, res, next) => {
+  try {
+    if (!isDBConnected()) return res.status(503).json({ ok: false, message: 'Database not connected' })
+    const id = req.params.id
+    if (!isId(id)) return res.status(400).json({ ok: false, message: 'Invalid id' })
+    const p = await Product.findById(id).select({ reviews: 1 }).lean()
+    if (!p) return res.status(404).json({ ok: false, message: 'Product not found' })
+    const list = Array.isArray(p.reviews) ? p.reviews : []
+    const data = list
+      .slice()
+      .sort((a, b) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime())
+      .map((r) => ({
+        id: r?._id,
+        name: r?.name || 'User',
+        rating: Number(r?.rating) || 0,
+        comment: r?.comment || '',
+        createdAt: r?.createdAt,
+        updatedAt: r?.updatedAt
+      }))
+    res.json({ ok: true, data })
+  } catch (err) {
+    next(err)
+  }
+}
+
+export const reviewsUpsert = async (req, res, next) => {
+  try {
+    if (!isDBConnected()) return res.status(503).json({ ok: false, message: 'Database not connected' })
+    const id = req.params.id
+    if (!isId(id)) return res.status(400).json({ ok: false, message: 'Invalid id' })
+    const userId = req.user?.id
+    if (!userId || !isId(userId)) return res.status(401).json({ ok: false, message: 'Unauthorized' })
+
+    const ratingRaw = Number(req.body?.rating)
+    if (!Number.isFinite(ratingRaw) || ratingRaw < 1 || ratingRaw > 5) return res.status(400).json({ ok: false, message: 'Invalid rating' })
+    const rating = Math.round(ratingRaw * 10) / 10
+    const comment = req.body?.comment !== undefined && req.body?.comment !== null ? String(req.body.comment).trim() : ''
+
+    const user = await User.findById(userId).select({ fullName: 1 }).lean()
+    if (!user) return res.status(401).json({ ok: false, message: 'Unauthorized' })
+
+    const doc = await Product.findById(id)
+    if (!doc) return res.status(404).json({ ok: false, message: 'Product not found' })
+
+    const name = user?.fullName ? String(user.fullName).trim() : 'User'
+    const list = Array.isArray(doc.reviews) ? doc.reviews : []
+    const existing = list.find((r) => String(r?.user) === String(userId))
+
+    if (existing) {
+      existing.name = name
+      existing.rating = rating
+      existing.comment = comment
+      existing.updatedAt = new Date()
+    } else {
+      doc.reviews.push({ user: userId, name, rating, comment })
+    }
+
+    const stats = computeReviewStats(doc.reviews)
+    const attrs = typeof doc.attributes === 'object' && doc.attributes !== null && !Array.isArray(doc.attributes) ? { ...doc.attributes } : {}
+    attrs.rating = stats.rating
+    attrs.reviewsCount = stats.reviewsCount
+    doc.attributes = attrs
+
+    await doc.save()
+
+    res.status(existing ? 200 : 201).json({ ok: true, data: { rating: stats.rating, reviewsCount: stats.reviewsCount } })
   } catch (err) {
     next(err)
   }
@@ -179,9 +432,13 @@ export const create = async (req, res, next) => {
       if (normalizedAttributes.purity !== undefined) delete normalizedAttributes.purity
     }
 
+    const hasSizes = req.body.hasSizes === undefined ? false : Boolean(req.body.hasSizes)
+    const sizes = hasSizes ? normalizeSizes(req.body.sizes) : undefined
+    if (hasSizes && !sizes) return res.status(400).json({ ok: false, message: 'Sizes required' })
+
     const doc = await Product.create({
       name: String(name).trim(),
-      description: description || '',
+      description: sanitizeHtml(description),
       sku: req.body.sku ? String(req.body.sku).trim() : undefined,
       images: normalizeImages(req.body.images),
       image: req.body.image ? String(req.body.image).trim() : undefined,
@@ -191,6 +448,8 @@ export const create = async (req, res, next) => {
       stock: stockRaw,
       material: material || undefined,
       materialType: materialType === undefined ? undefined : materialType,
+      hasSizes,
+      sizes,
       category: category || undefined,
       subCategory: subCategory || undefined,
       isFeatured: Boolean(isFeatured),
@@ -198,7 +457,10 @@ export const create = async (req, res, next) => {
       isActive: req.body.isActive === undefined ? true : Boolean(req.body.isActive),
       attributes: Object.keys(normalizedAttributes).length ? normalizedAttributes : undefined
     })
-    res.status(201).json({ ok: true, data: doc.toObject() })
+    const out = doc.toObject()
+    const { goldByCarat, silverByPurityMark, diamondByTypeId } = await buildRateMapsForProduct(out)
+    const priced = applyDynamicPricing({ product: out, goldByCarat, silverByPurityMark, diamondByTypeId })
+    res.status(201).json({ ok: true, data: priced })
   } catch (err) {
     next(err)
   }
@@ -214,7 +476,7 @@ export const updateOne = async (req, res, next) => {
 
     const data = { ...req.body }
     if (data.name !== undefined) doc.name = data.name
-    if (data.description !== undefined) doc.description = data.description
+    if (data.description !== undefined) doc.description = sanitizeHtml(data.description)
     if (data.attributes !== undefined) doc.attributes = data.attributes
     if (data.isActive !== undefined) doc.isActive = Boolean(data.isActive)
     if (data.isFeatured !== undefined) doc.isFeatured = Boolean(data.isFeatured)
@@ -238,6 +500,21 @@ export const updateOne = async (req, res, next) => {
       const n = Number(data.stock)
       if (Number.isNaN(n) || n < 0) return res.status(400).json({ ok: false, message: 'Invalid stock' })
       doc.stock = n
+    }
+
+    if (data.hasSizes !== undefined) {
+      doc.hasSizes = Boolean(data.hasSizes)
+      if (!doc.hasSizes) doc.sizes = undefined
+    }
+    if (data.sizes !== undefined) {
+      const sizes = normalizeSizes(data.sizes)
+      if (!sizes) {
+        doc.sizes = undefined
+        doc.hasSizes = false
+      } else {
+        doc.sizes = sizes
+        doc.hasSizes = true
+      }
     }
 
     if (data.material !== undefined) {
@@ -351,7 +628,10 @@ export const updateOne = async (req, res, next) => {
     }
 
     const saved = await doc.save()
-    res.json({ ok: true, data: saved.toObject() })
+    const out = saved.toObject()
+    const { goldByCarat, silverByPurityMark, diamondByTypeId } = await buildRateMapsForProduct(out)
+    const priced = applyDynamicPricing({ product: out, goldByCarat, silverByPurityMark, diamondByTypeId })
+    res.json({ ok: true, data: priced })
   } catch (err) {
     next(err)
   }
