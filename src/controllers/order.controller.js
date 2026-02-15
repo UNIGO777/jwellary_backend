@@ -1,8 +1,12 @@
 import mongoose from 'mongoose'
 import { isDBConnected } from '../config/db.js'
+import { env } from '../config/env.js'
+import { sendMail } from '../config/mailer.js'
+import { adminNewOrderEmail, customerOrderConfirmedEmail, customerOrderStatusUpdatedEmail } from '../EmailTamplates/index.js'
 import { Order } from '../models/order.model.js'
 import { Product } from '../models/product.model.js'
 import { PromoCode } from '../models/promocode.model.js'
+import { User } from '../models/user.model.js'
 
 const isId = (id) => mongoose.isValidObjectId(id)
 
@@ -129,6 +133,20 @@ export const create = async (req, res, next) => {
     })
 
     const created = await Order.findById(doc._id).populate('promocode').lean()
+    const user = await User.findById(userId).select({ email: 1, fullName: 1 }).lean()
+
+    const customerTo = (created?.customerEmail || user?.email || '').trim()
+    const adminTo = (env.admin.email || env.mail.to || env.mail.from || '').trim()
+
+    if (adminTo) {
+      const tpl = adminNewOrderEmail({ order: created, user })
+      sendMail({ to: adminTo, subject: tpl.subject, text: tpl.text, html: tpl.html }).catch(() => {})
+    }
+    if (customerTo) {
+      const tpl = customerOrderConfirmedEmail({ order: created })
+      sendMail({ to: customerTo, subject: tpl.subject, text: tpl.text, html: tpl.html }).catch(() => {})
+    }
+
     res.status(201).json({ ok: true, data: created })
   } catch (err) {
     next(err)
@@ -144,8 +162,17 @@ export const setStatus = async (req, res, next) => {
     if (!status) return res.status(400).json({ ok: false, message: 'Missing status' })
     const doc = await Order.findById(id)
     if (!doc) return res.status(404).json({ ok: false, message: 'Order not found' })
+    const previousStatus = doc.status
     doc.status = status
     const saved = await doc.save()
+    if (String(previousStatus) !== String(status)) {
+      const user = doc.user ? await User.findById(doc.user).select({ email: 1, fullName: 1 }).lean() : null
+      const customerTo = (doc.customerEmail || user?.email || '').trim()
+      if (customerTo) {
+        const tpl = customerOrderStatusUpdatedEmail({ order: saved.toObject(), previousStatus, nextStatus: status })
+        sendMail({ to: customerTo, subject: tpl.subject, text: tpl.text, html: tpl.html }).catch(() => {})
+      }
+    }
     res.json({ ok: true, data: saved.toObject() })
   } catch (err) {
     next(err)

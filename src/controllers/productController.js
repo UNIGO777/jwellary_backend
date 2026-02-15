@@ -1,4 +1,6 @@
 import mongoose from 'mongoose'
+import fs from 'fs/promises'
+import path from 'path'
 import { Product } from '../models/product.model.js'
 import { Category } from '../models/category.model.js'
 import { SubCategory } from '../models/subcategory.model.js'
@@ -8,6 +10,7 @@ import { DiamondPrice } from '../models/diamondPrice.model.js'
 import { DiamondType } from '../models/diamondType.model.js'
 import { User } from '../models/user.model.js'
 import { isDBConnected } from '../config/db.js'
+import { env } from '../config/env.js'
 
 const isId = (id) => mongoose.isValidObjectId(id)
 const normalizePrice = (price) => {
@@ -55,6 +58,41 @@ const formatCompactNumber = (value) => {
   return String(Number(n.toFixed(6)))
 }
 
+const uploadRootDir = path.resolve(env.uploadDir)
+
+const getUploadsAbsolutePath = (value) => {
+  const raw = value === undefined || value === null ? '' : String(value).trim()
+  if (!raw) return null
+
+  let pathname = raw
+  if (raw.startsWith('http://') || raw.startsWith('https://')) {
+    try {
+      pathname = new URL(raw).pathname || raw
+    } catch {
+      pathname = raw
+    }
+  }
+
+  const needle = '/uploads/'
+  const idx = pathname.lastIndexOf(needle)
+  if (idx === -1) return null
+
+  const rest = pathname.slice(idx + needle.length).split('?')[0].split('#')[0].replace(/^\/+/, '')
+  if (!rest || rest.includes('..') || path.isAbsolute(rest)) return null
+
+  const abs = path.resolve(uploadRootDir, rest)
+  const prefix = uploadRootDir.endsWith(path.sep) ? uploadRootDir : uploadRootDir + path.sep
+  if (!abs.startsWith(prefix)) return null
+  return abs
+}
+
+const unlinkIfExists = async (filePath) => {
+  if (!filePath) return
+  try {
+    await fs.unlink(filePath)
+  } catch {}
+}
+
 const sanitizeHtml = (value) => {
   const input = value === undefined || value === null ? '' : String(value)
   if (!input) return ''
@@ -90,7 +128,7 @@ const computeAskingPriceInr = (p) => {
   return Number.isFinite(total) && total >= 0 ? total : 0
 }
 
-const computeMaterialValueInr = ({ product, goldByCarat, silverByPurityMark, diamondByTypeId }) => {
+const computeMaterialPricing = ({ product, goldByCarat, silverByPurityMark, diamondByTypeId }) => {
   const attrs = asPlainObject(product?.attributes)
   const weight = Number(attrs?.weightGrams)
   const weightValue = Number.isFinite(weight) && weight > 0 ? weight : 0
@@ -100,38 +138,43 @@ const computeMaterialValueInr = ({ product, goldByCarat, silverByPurityMark, dia
   if (material === 'gold') {
     const carat = Number(materialType)
     const rate = Number(goldByCarat?.get(carat)?.ratePer10Gram)
-    if (!Number.isFinite(rate) || rate <= 0 || !weightValue) return 0
-    return (rate / 10) * weightValue
+    if (!Number.isFinite(rate) || rate <= 0 || !weightValue) return { valueInr: 0 }
+    return { valueInr: (rate / 10) * weightValue, ratePer10Gram: rate, weightGrams: weightValue, carat }
   }
 
   if (material === 'silver') {
     const purityMark = Number(materialType)
     const rate = Number(silverByPurityMark?.get(purityMark)?.ratePerKg)
-    if (!Number.isFinite(rate) || rate <= 0 || !weightValue) return 0
-    return (rate / 1000) * weightValue
+    if (!Number.isFinite(rate) || rate <= 0 || !weightValue) return { valueInr: 0 }
+    return { valueInr: (rate / 1000) * weightValue, ratePerKg: rate, weightGrams: weightValue, purityMark }
   }
 
   if (material === 'diamond') {
     const typeId = materialType ? String(materialType) : ''
-    if (!typeId) return 0
+    if (!typeId) return { valueInr: 0 }
     const rate = Number(diamondByTypeId?.get(typeId)?.pricePerCarat)
-    if (!Number.isFinite(rate) || rate <= 0) return 0
+    if (!Number.isFinite(rate) || rate <= 0) return { valueInr: 0 }
     const carat = Number(attrs?.diamondCarat ?? attrs?.carat ?? attrs?.carats ?? attrs?.weightCarat ?? attrs?.weightCarats)
     const caratValue = Number.isFinite(carat) && carat > 0 ? carat : 0
-    if (!caratValue) return 0
-    return rate * caratValue
+    if (!caratValue) return { valueInr: 0 }
+    return { valueInr: rate * caratValue, pricePerCarat: rate, diamondCarat: caratValue, diamondType: typeId }
   }
 
-  return 0
+  return { valueInr: 0 }
 }
 
 const applyDynamicPricing = ({ product, goldByCarat, silverByPurityMark, diamondByTypeId }) => {
   const askingPriceInr = computeAskingPriceInr(product)
-  const materialValueInr = computeMaterialValueInr({ product, goldByCarat, silverByPurityMark, diamondByTypeId })
+  const material = product?.material ? String(product.material).toLowerCase() : ''
+  const materialPricing = computeMaterialPricing({ product, goldByCarat, silverByPurityMark, diamondByTypeId })
+  const materialValueInr = Number(materialPricing?.valueInr) || 0
   const total = askingPriceInr + materialValueInr
   const attrs = { ...asPlainObject(product?.attributes) }
   attrs.askingPriceInr = Math.round(askingPriceInr)
   attrs.materialValueInr = Math.round(materialValueInr)
+  if (material === 'gold' && Number.isFinite(materialPricing?.ratePer10Gram)) attrs.materialRatePer10Gram = Math.round(Number(materialPricing.ratePer10Gram))
+  if (material === 'silver' && Number.isFinite(materialPricing?.ratePerKg)) attrs.materialRatePerKg = Math.round(Number(materialPricing.ratePerKg))
+  if (material === 'diamond' && Number.isFinite(materialPricing?.pricePerCarat)) attrs.materialPricePerCarat = Math.round(Number(materialPricing.pricePerCarat))
   attrs.priceInr = Math.round(total)
   product.attributes = attrs
   product.priceInr = attrs.priceInr
@@ -147,19 +190,19 @@ const buildRateMapsForProduct = async (p) => {
   if (material === 'gold') {
     const carat = Number(p?.materialType)
     if (Number.isFinite(carat)) {
-      const rate = await GoldRate.findOne({ carat }).sort({ date: -1, createdAt: -1 }).lean()
+      const rate = await GoldRate.findOne({ carat, ratePer10Gram: { $gt: 0 } }).sort({ date: -1, createdAt: -1 }).lean()
       if (rate) goldByCarat.set(carat, { ratePer10Gram: rate?.ratePer10Gram })
     }
   } else if (material === 'silver') {
     const purityMark = Number(p?.materialType)
     if (Number.isFinite(purityMark)) {
-      const rate = await SilverRate.findOne({ purityMark }).sort({ date: -1, createdAt: -1 }).lean()
+      const rate = await SilverRate.findOne({ purityMark, ratePerKg: { $gt: 0 } }).sort({ date: -1, createdAt: -1 }).lean()
       if (rate) silverByPurityMark.set(purityMark, { ratePerKg: rate?.ratePerKg })
     }
   } else if (material === 'diamond') {
     const typeId = p?.materialType ? String(p.materialType) : ''
     if (typeId && isId(typeId)) {
-      const rate = await DiamondPrice.findOne({ diamondType: typeId }).sort({ date: -1, createdAt: -1 }).lean()
+      const rate = await DiamondPrice.findOne({ diamondType: typeId, pricePerCarat: { $gt: 0 } }).sort({ date: -1, createdAt: -1 }).lean()
       if (rate) diamondByTypeId.set(typeId, { pricePerCarat: rate?.pricePerCarat })
     }
   }
@@ -236,7 +279,7 @@ export const index = async (req, res, next) => {
     const [goldLatest, silverLatest, diamondLatest] = await Promise.all([
       goldCarats.length
         ? GoldRate.aggregate([
-            { $match: { carat: { $in: goldCarats } } },
+            { $match: { carat: { $in: goldCarats }, ratePer10Gram: { $gt: 0 } } },
             { $sort: { date: -1, createdAt: -1, _id: -1 } },
             { $group: { _id: '$carat', carat: { $first: '$carat' }, ratePer10Gram: { $first: '$ratePer10Gram' } } },
             { $project: { _id: 0, carat: 1, ratePer10Gram: 1 } }
@@ -244,7 +287,7 @@ export const index = async (req, res, next) => {
         : [],
       silverMarks.length
         ? SilverRate.aggregate([
-            { $match: { purityMark: { $in: silverMarks } } },
+            { $match: { purityMark: { $in: silverMarks }, ratePerKg: { $gt: 0 } } },
             { $sort: { date: -1, createdAt: -1, _id: -1 } },
             { $group: { _id: '$purityMark', purityMark: { $first: '$purityMark' }, ratePerKg: { $first: '$ratePerKg' } } },
             { $project: { _id: 0, purityMark: 1, ratePerKg: 1 } }
@@ -252,7 +295,7 @@ export const index = async (req, res, next) => {
         : [],
       diamondIdsForQuery.length
         ? DiamondPrice.aggregate([
-            { $match: { diamondType: { $in: diamondIdsForQuery } } },
+            { $match: { diamondType: { $in: diamondIdsForQuery }, pricePerCarat: { $gt: 0 } } },
             { $sort: { date: -1, createdAt: -1, _id: -1 } },
             { $group: { _id: '$diamondType', diamondType: { $first: '$diamondType' }, pricePerCarat: { $first: '$pricePerCarat' } } },
             { $project: { _id: 0, diamondType: 1, pricePerCarat: 1 } }
@@ -641,8 +684,26 @@ export const remove = async (req, res, next) => {
   try {
     if (!isDBConnected()) return res.status(503).json({ ok: false, message: 'Database not connected' })
     const id = req.params.id
-    const ok = await Product.findByIdAndDelete(id)
-    if (!ok) return res.status(404).json({ ok: false, message: 'Product not found' })
+    if (!isId(id)) return res.status(400).json({ ok: false, message: 'Invalid id' })
+    const doc = await Product.findById(id)
+    if (!doc) return res.status(404).json({ ok: false, message: 'Product not found' })
+
+    const media = []
+    if (doc.image) media.push(doc.image)
+    if (doc.video) media.push(doc.video)
+    if (Array.isArray(doc.images)) media.push(...doc.images)
+
+    const absPaths = Array.from(
+      new Set(
+        media
+          .map(getUploadsAbsolutePath)
+          .filter(Boolean)
+          .map(String)
+      )
+    )
+
+    await Promise.all(absPaths.map(unlinkIfExists))
+    await doc.deleteOne()
     res.status(204).send()
   } catch (err) {
     next(err)
@@ -655,18 +716,21 @@ export const materialTypes = async (req, res, next) => {
 
     const [goldLatest, silverLatest, diamondLatest] = await Promise.all([
       GoldRate.aggregate([
+        { $match: { ratePer10Gram: { $gt: 0 } } },
         { $sort: { date: -1, createdAt: -1, _id: -1 } },
         { $group: { _id: '$carat', carat: { $first: '$carat' }, purity: { $first: '$purity' }, price: { $first: '$ratePer10Gram' } } },
         { $project: { _id: 0, carat: 1, purity: 1, price: 1 } },
         { $sort: { carat: -1 } }
       ]),
       SilverRate.aggregate([
+        { $match: { ratePerKg: { $gt: 0 } } },
         { $sort: { date: -1, createdAt: -1, _id: -1 } },
         { $group: { _id: '$purityMark', purityMark: { $first: '$purityMark' }, purity: { $first: '$purityPercent' }, price: { $first: '$ratePerKg' } } },
         { $project: { _id: 0, purityMark: 1, purity: 1, price: 1 } },
         { $sort: { purityMark: -1 } }
       ]),
       DiamondPrice.aggregate([
+        { $match: { pricePerCarat: { $gt: 0 } } },
         { $sort: { date: -1, createdAt: -1, _id: -1 } },
         { $group: { _id: '$diamondType', diamondType: { $first: '$diamondType' }, price: { $first: '$pricePerCarat' } } },
         { $project: { _id: 0, diamondType: 1, price: 1 } }
