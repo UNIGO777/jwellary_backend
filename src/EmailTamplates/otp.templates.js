@@ -21,7 +21,7 @@ const baseHtml = ({ brand, heading, otp, expiresInMinutes }) => {
   })
 }
 
-export const adminOtpEmail = ({ otp, expiresInMinutes = 10, brand = 'Suman Jwellaries' }) => {
+export const adminOtpEmail = ({ otp, expiresInMinutes = 10, brand = 'OM ABHUSHAN JWELLARIES ' }) => {
   const heading = 'Admin Login OTP'
   return {
     subject: heading,
@@ -30,7 +30,7 @@ export const adminOtpEmail = ({ otp, expiresInMinutes = 10, brand = 'Suman Jwell
   }
 }
 
-export const userLoginOtpEmail = ({ otp, expiresInMinutes = 10, brand = 'Suman Jwellaries' }) => {
+export const userLoginOtpEmail = ({ otp, expiresInMinutes = 10, brand = 'OM ABHUSHAN JWELLARIES ' }) => {
   const heading = 'Login OTP'
   return {
     subject: heading,
@@ -39,7 +39,7 @@ export const userLoginOtpEmail = ({ otp, expiresInMinutes = 10, brand = 'Suman J
   }
 }
 
-export const userSignupOtpEmail = ({ otp, expiresInMinutes = 10, brand = 'Suman Jwellaries' }) => {
+export const userSignupOtpEmail = ({ otp, expiresInMinutes = 10, brand = 'OM ABHUSHAN JWELLARIES ' }) => {
   const heading = 'Signup OTP'
   return {
     subject: heading,

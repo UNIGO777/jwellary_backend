@@ -1,7 +1,7 @@
 export const openapiSpec = {
   openapi: '3.0.3',
   info: {
-    title: 'Suman Jwellaries Backend API',
+    title: 'OM ABHUSHAN JWELLARIES  Backend API',
     version: '1.0.0',
     description: 'API for products, categories, subcategories, uploads, mail, and admin auth'
   },

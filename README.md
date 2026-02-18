@@ -1,4 +1,4 @@
-# Suman Jwellaries Backend
+# OM ABHUSHAN JWELLARIES  Backend
 
 Node.js Express backend for an e‑commerce app. It provides product, category, subcategory, file upload, and mail endpoints. MongoDB is used via Mongoose.
 
