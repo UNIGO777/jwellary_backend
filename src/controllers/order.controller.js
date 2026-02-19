@@ -10,6 +10,39 @@ import { User } from '../models/user.model.js'
 
 const isId = (id) => mongoose.isValidObjectId(id)
 
+const computeDiscount = ({ promo, orderTotal }) => {
+  const total = Number(orderTotal)
+  if (Number.isNaN(total) || total < 0) return null
+
+  if (!promo?.isActive) return { ok: false, message: 'Promo code inactive' }
+  if (promo.startsAt && Date.now() < new Date(promo.startsAt).getTime()) return { ok: false, message: 'Promo code not started' }
+  if (promo.endsAt && Date.now() > new Date(promo.endsAt).getTime()) return { ok: false, message: 'Promo code expired' }
+  if (promo.usageLimit !== undefined && promo.usageLimit !== null && promo.usedCount >= promo.usageLimit) {
+    return { ok: false, message: 'Promo code usage limit reached' }
+  }
+  if (promo.minOrderValue !== undefined && promo.minOrderValue !== null && total < promo.minOrderValue) {
+    return { ok: false, message: `Minimum order value is ${promo.minOrderValue}` }
+  }
+
+  let discount = 0
+  if (promo.discountType === 'percent') {
+    discount = (total * Number(promo.amount || 0)) / 100
+  } else if (promo.discountType === 'fixed') {
+    discount = Number(promo.amount || 0)
+  } else {
+    return { ok: false, message: 'Invalid discount type' }
+  }
+
+  if (Number.isNaN(discount) || discount < 0) discount = 0
+  if (promo.maxDiscount !== undefined && promo.maxDiscount !== null) {
+    discount = Math.min(discount, Number(promo.maxDiscount || 0))
+  }
+  discount = Math.min(discount, total)
+
+  const totalAfter = total - discount
+  return { ok: true, discount, totalAfter }
+}
+
 const normalizeItem = async (input) => {
   const productId = input?.product
   if (!isId(productId)) return null
@@ -111,20 +144,32 @@ export const create = async (req, res, next) => {
     if (Number.isNaN(nDiscount) || nDiscount < 0) return res.status(400).json({ ok: false, message: 'Invalid discount' })
     if (Number.isNaN(nTotal) || nTotal < 0) return res.status(400).json({ ok: false, message: 'Invalid total' })
 
+    const computedSubtotal = normalizedItems.reduce((sum, it) => sum + Number(it.price || 0) * Number(it.quantity || 0), 0)
+    if (Number.isNaN(computedSubtotal) || computedSubtotal < 0) return res.status(400).json({ ok: false, message: 'Invalid subtotal' })
+
     let promo = undefined
+    let finalDiscount = Math.min(Math.max(0, nDiscount), computedSubtotal)
     if (promocodeId) {
       if (!isId(promocodeId)) return res.status(400).json({ ok: false, message: 'Invalid promocodeId' })
       const exists = await PromoCode.findById(promocodeId).lean()
       if (!exists) return res.status(404).json({ ok: false, message: 'Promo code not found' })
+      const discountResult = computeDiscount({ promo: exists, orderTotal: computedSubtotal })
+      if (!discountResult) return res.status(400).json({ ok: false, message: 'Invalid subtotal' })
+      if (!discountResult.ok) return res.status(400).json({ ok: false, message: discountResult.message })
       promo = promocodeId
+      finalDiscount = Math.min(Math.max(0, Number(discountResult.discount || 0)), computedSubtotal)
     }
+
+    const discountedSubtotal = Math.max(0, computedSubtotal - finalDiscount)
+    const gst = Math.round(discountedSubtotal * 0.03)
+    const computedTotal = discountedSubtotal + gst
 
     const doc = await Order.create({
       user: userId,
       items: normalizedItems,
-      subtotal: nSubtotal,
-      discount: nDiscount,
-      total: nTotal,
+      subtotal: computedSubtotal,
+      discount: finalDiscount,
+      total: computedTotal,
       promocode: promo,
       customerEmail: customerEmail ? String(customerEmail).trim() : undefined,
       customerPhone: customerPhone ? String(customerPhone).trim() : undefined,
